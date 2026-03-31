@@ -17,3 +17,7 @@ dependencies = [
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
 build-backend = "uv_build"
+
+[project.scripts]
+watch = "uv_agent_workspace.watch:main"
+fetch = "uv_agent_workspace.web_fetch:main"
