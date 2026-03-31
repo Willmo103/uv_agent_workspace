@@ -2,15 +2,15 @@ import os
 import time
 import json
 import ollama
-from .config import WATCH_DIR, Path
+from .config import FETCHED_PAGES, Path
 
-LOGFILE = WATCH_DIR / "watch_and_describe.log.jsonl"  # json list file
+LOGFILE = FETCHED_PAGES / "watch_and_describe.log.jsonl"  # json list file
 CLIENT = ollama.Client()
 MODEL = "qwen3.5-agent"
 DESCRIPTION_CACHE = (
     {}
 )  # in-memory cache to avoid redundant LLM calls for the same content
-CACHE_JSON = WATCH_DIR / "description_cache.json"
+CACHE_JSON = FETCHED_PAGES / "description_cache.json"
 if not CACHE_JSON.exists():
     CACHE_JSON.touch()
 else:
@@ -20,7 +20,7 @@ else:
     except Exception as e:
         print(f"Error loading description cache: {e}")
         DESCRIPTION_CACHE = {}
-for f in WATCH_DIR.iterdir():
+for f in FETCHED_PAGES.iterdir():
     if f.is_dir():
         for file in f.iterdir():
             if file.suffix == ".md":
@@ -103,10 +103,10 @@ def describe_webpage_content(file_path: Path) -> str:
 def watch_for_new_md_files():
     """Continuously watch the directory for new markdown files and describe them."""
 
-    print(f"Watching directory: {WATCH_DIR} for new markdown files...")
+    print(f"Watching directory: {FETCHED_PAGES} for new markdown files...")
     try:
         while True:
-            for filename in WATCH_DIR.iterdir():
+            for filename in FETCHED_PAGES.iterdir():
                 if not filename.is_dir():
                     continue
                 else:
@@ -131,7 +131,7 @@ def watch_for_new_md_files():
 def main():
     """Main function to start watching the directory."""
     PROCESS_PID = os.getpid()
-    _PID_FILE = WATCH_DIR / "watch_process.pid"
+    _PID_FILE = FETCHED_PAGES / "watch_process.pid"
     if _PID_FILE.exists():
         existing_pid = _PID_FILE.read_text(encoding="utf-8").strip()
         if existing_pid:

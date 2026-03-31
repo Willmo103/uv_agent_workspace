@@ -7,13 +7,13 @@ from bs4 import BeautifulSoup
 
 import typer
 
-from .config import WATCH_DIR, Path
+from .config import FETCHED_PAGES, Path
 
 
 def get_paths(url: str) -> tuple[Path, str]:
     """Return directory name and filename based on the URL."""
     base_url = urlparse(url)
-    dirname = WATCH_DIR / base_url.netloc
+    dirname = FETCHED_PAGES / base_url.netloc
     filename = base_url.path.strip("/").replace("/", "_") or "index"
     return dirname, filename
 
@@ -86,12 +86,12 @@ def fetch(
 @app.command(name="list")
 def list_fetched():
     """List all fetched webpages in the watch directory."""
-    if not WATCH_DIR.exists():
-        print(f"No fetched webpages found in {WATCH_DIR}")
+    if not FETCHED_PAGES.exists():
+        print(f"No fetched webpages found in {FETCHED_PAGES}")
         return
 
-    print(f"Fetched webpages in {WATCH_DIR}:")
-    for entry in WATCH_DIR.iterdir():
+    print(f"Fetched webpages in {FETCHED_PAGES}:")
+    for entry in FETCHED_PAGES.iterdir():
         if entry.is_dir():
             print(f"- {entry.name}")
             for desc in entry.glob("*.description.txt"):

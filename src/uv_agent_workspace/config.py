@@ -1,3 +1,3 @@
 from pathlib import Path
 
-WATCH_DIR = Path("~/fetched_webpages").expanduser()
+FETCHED_PAGES = Path("~/fetched_webpages").expanduser()

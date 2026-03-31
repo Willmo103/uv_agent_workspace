@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from .config import WATCH_DIR
+from .config import FETCHED_PAGES
 from .fetch import convert_to_markdown, get_paths,
 
 
