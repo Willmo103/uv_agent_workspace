@@ -1,0 +1,119 @@
+import os
+import ollama
+from .config import WATCH_DIR, Path
+
+LOGFILE = WATCH_DIR / "watch_and_describe.log.jsonl"  # json list file
+CLIENT = ollama.Client()
+MODEL = "qwen3.5-agent"
+
+
+def format_json_to_single_line(json_obj: dict) -> str:
+    """Convert a JSON object to a single-line string."""
+    import json
+
+    return json.dumps(json_obj, separators=(",", ":"))
+
+
+def append_to_logfile(entry: dict):
+    """Append a JSON entry to the log file as a single line."""
+    if not LOGFILE.exists():
+        LOGFILE.touch()
+    LOGFILE.write_text(
+        format_json_to_single_line(entry), encoding="utf-8", newline="\n"
+    )
+
+
+def describe_prompt(content: str) -> str:
+    """Format the prompt for the LLM based on the file path."""
+    return f"""
+# Webpage Content Description
+
+You are very knowledgeable. An expert. Think and respond with confidence.
+
+## Task
+
+Describe the content of the webpage provided below in a concise manner; taking into account the type of information it contains,
+and why the user might be wanting to store this information. For example, if the webpage is a news article,
+the description might include the main topic of the article, the source, and any key details that stand out.
+If the webpage is a piece of documentation, the description might focus on the subject matter, and specific topics covered e.g.
+"This webpage contains documentation for the Python requests library, covering installation instructions, usage examples, and API reference.
+If the webpage has a lot of data tables or structured information, the description might highlight the type of data and its potential use cases.
+The goal is to provide a clear and concise summary that captures the essence of the webpage's content, and why it might be valuable to the user."
+
+## Output Format
+
+- The output should be 1400 characters or less
+- The output should be formatted as a markdown string
+- The output should be provided with retriveal in mind
+- `Obsidian.MD` style tags e.g. `#news` `#documentation` `#data-table` should be used to highlight keywords, topics,
+themes, stand-out details and types of information contained in the webpage.
+  - tags should be included in the description, and should be relevant to the content of the webpage.
+  - The tags should help categorize the webpage for easy retrieval later on.
+
+---
+
+Webpage Content:
+```
+{content}
+```
+"""
+
+
+def describe_webpage_content(file_path: Path) -> str:
+    """Read webpage content from file and get description from LLM."""
+    content = file_path.read_text(encoding="utf-8")
+    prompt = describe_prompt(content)
+    response = CLIENT.chat(MODEL, [{"role": "user", "content": prompt}])
+    log_entry = format_json_to_single_line(response.model_dump_json())
+    append_to_logfile({"file_path": file_path, "response": log_entry})
+    return response.message.content.strip()
+
+
+def watch_for_new_md_files():
+    """Continuously watch the directory for new markdown files and describe them."""
+    import time
+
+    print(f"Watching directory: {WATCH_DIR} for new markdown files...")
+    try:
+        while True:
+            for filename in os.listdir(WATCH_DIR):
+                if filename.endswith(".md"):
+                    file_path = WATCH_DIR / filename
+                    description_file = WATCH_DIR / (file_path.stem + ".description.txt")
+                    if not description_file.exists():
+                        print(f"New markdown file detected: {filename}")
+                        try:
+                            description = describe_webpage_content(file_path)
+                            description_file.write_text(description, encoding="utf-8")
+                            print(f"Description saved to: {description_file}")
+                        except Exception as e:
+                            print(f"Error describing {filename}: {e}")
+                            append_to_logfile(
+                                format_json_to_single_line(
+                                    {"file_path": file_path, "error": str(e)}
+                                )
+                            )
+
+            time.sleep(10)  # check every 10 seconds
+    except KeyboardInterrupt:
+        print("Stopping directory watch.")
+
+
+def main():
+    """Main function to start watching the directory."""
+    rettry_count = 0
+    while rettry_count < 5:
+        try:
+            watch_for_new_md_files()
+            break  # exit loop if successful
+        except Exception as e:
+            print(f"Error in main: {e}")
+            append_to_logfile(
+                format_json_to_single_line({"error": f"Error in main: {str(e)}"})
+            )
+            rettry_count += 1
+            print(f"Retrying... ({rettry_count}/5)")
+
+
+if __name__ == "__main__":
+    main()
