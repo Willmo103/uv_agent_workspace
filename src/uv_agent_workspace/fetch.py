@@ -75,6 +75,8 @@ def list_fetched():
     for entry in WATCH_DIR.iterdir():
         if entry.is_dir():
             print(f"- {entry.name}")
+            for desc in entry.glob("*.description.txt"):
+                print(f"  - {desc.name}")
 
 
 if __name__ == "__main__":
