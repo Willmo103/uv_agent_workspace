@@ -1,19 +1,15 @@
 from fastapi import FastAPI
-from .config import FETCHED_PAGES
-from .fetch import convert_to_markdown, get_paths,
+from .fetch import process_html_content
 
 
 app = FastAPI()
 
 
-app.post("/fetch")
-
-
+@app.post("/fetch")
 def fetch(url: str, html: str):
     """Fetch a webpage and convert to markdown."""
-    dirname, filename = get_paths(url)
-    if not
-    md_content = convert_to_markdown(html)
+    response = process_html_content(url, html)
+    return response
 
 
 if __name__ == "__main__":
