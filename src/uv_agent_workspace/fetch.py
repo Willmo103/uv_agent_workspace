@@ -1,7 +1,5 @@
 """Fetch HTML from web URLs and convert to markdown."""
 
-from typing import Optional
-
 import httpx
 from html2text import HTML2Text
 from urllib.parse import urlparse
