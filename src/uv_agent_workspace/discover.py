@@ -228,15 +228,15 @@ def agent_loop(root_path: str):
         )
 
         # Check if the model wants to call one or more tools
-        if hasattr(response, "tool_calls") and response.tool_calls:
+        if response.message.tool_calls:
             # 1. Append the assistant's tool-call request to the history
             # (Most APIs require the assistant's original tool call message to be in the history)
             messages.append(response.message)
 
             # 2. Execute each tool and append the results as 'tool' messages
-            for tool_call in response.tool_calls:
+            for tool_call in response.message.tool_calls:
                 func_name = tool_call.function.name
-                func_args = json.loads(tool_call.function.arguments)
+                func_args = tool_call.function.arguments
 
                 print(f"Agent called {func_name} with args: {func_args}")
 
@@ -252,7 +252,6 @@ def agent_loop(root_path: str):
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tool_call.id,
                         "name": func_name,
                         "content": str(result),
                     }
@@ -263,10 +262,10 @@ def agent_loop(root_path: str):
 
         else:
             # The agent provided a standard text response instead of a tool call
-            print(f"Agent Response:\n{response.content}")
+            print(f"Agent Response:\n{response.message.content}")
 
             # Append the assistant's response to maintain conversation flow
-            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "assistant", "content": response.message.content})
 
             # Re-evaluate the context and prompt the agent to keep going
             # (This reflects the updated directory state after tools were run)
