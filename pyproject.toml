@@ -8,11 +8,13 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "bs4>=0.0.2",
     "fastapi>=0.135.2",
     "html2text>=2025.4.15",
     "ollama>=0.6.1",
     "rich>=14.3.3",
     "typer>=0.24.1",
+    "uvicorn>=0.42.0",
 ]
 
 [build-system]

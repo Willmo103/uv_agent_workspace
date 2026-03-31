@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import ollama
@@ -129,6 +130,25 @@ def watch_for_new_md_files():
 
 def main():
     """Main function to start watching the directory."""
+    PROCESS_PID = os.getpid()
+    _PID_FILE = WATCH_DIR / "watch_process.pid"
+    if _PID_FILE.exists():
+        existing_pid = _PID_FILE.read_text(encoding="utf-8").strip()
+        if existing_pid:
+            print(
+                f"Another instance of the watcher is already running with PID: {existing_pid}. Exiting."
+            )
+            # terminate the existing process if it's still running
+            try:
+                os.kill(int(existing_pid), 0)  # check if process is running
+                print(f"Terminating existing watcher process with PID: {existing_pid}")
+                os.kill(int(existing_pid), 9)  # force kill
+            except OSError:
+                print(
+                    f"No process found with PID: {existing_pid}. Continuing to start new watcher."
+                )
+    _PID_FILE.write_text(str(PROCESS_PID), encoding="utf-8")
+    # the the running PID to the log file for monitoring purposes
     rettry_count = 0
     while rettry_count < 5:
         try:
@@ -144,9 +164,13 @@ def main():
             )
             rettry_count += 1
             print(f"Retrying... ({rettry_count}/5)")
-        if rettry_count >= 5:
-            print("Max retry attempts reached. Exiting.")
-            break
+            if rettry_count >= 5:
+                print("Max retry attempts reached. Exiting.")
+                break
+            else:
+                continue  # retry immediately
+        finally:
+            _PID_FILE.unlink(missing_ok=True)  # clean up PID file on exit
 
 
 if __name__ == "__main__":

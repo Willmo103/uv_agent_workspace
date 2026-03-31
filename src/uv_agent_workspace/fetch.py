@@ -3,19 +3,29 @@
 import httpx
 from html2text import HTML2Text
 from urllib.parse import urlparse
-import os
+from bs4 import BeautifulSoup
 
 import typer
 
-from .config import WATCH_DIR
+from .config import WATCH_DIR, Path
 
 
-def clean_url_path(url: str) -> tuple[str, str]:
-    """Extract base filename from URL, removing query params and fragments."""
+def get_paths(url: str) -> tuple[Path, str]:
+    """Return directory name and filename based on the URL."""
     base_url = urlparse(url)
-    dirname = base_url.netloc
+    dirname = WATCH_DIR / base_url.netloc
     filename = base_url.path.strip("/").replace("/", "_") or "index"
     return dirname, filename
+
+
+def extract_links_from_html(html: str) -> list[str]:
+    """Extract all hyperlinks from the HTML content."""
+
+    soup = BeautifulSoup(html, "html.parser")
+    links = []
+    for a_tag in soup.find_all("a", href=True):
+        links.append(a_tag["href"])
+    return links
 
 
 def fetch_url(url: str) -> str:
@@ -33,6 +43,17 @@ def convert_to_markdown(html: str) -> str:
     return parser.handle(html).strip()
 
 
+def should_update(existing_file: Path, new_content: str) -> bool:
+    """returns True if the existing file needs to be updated based on content comparison."""
+    if not existing_file.exists():
+        return True
+    existing_html = existing_file.read_text(encoding="utf-8")
+    if existing_html == new_content:
+        return False
+    else:
+        return True
+
+
 app = typer.Typer(help="Fetch a webpage and convert to markdown.")
 
 
@@ -42,26 +63,24 @@ def fetch(
         ..., help="The URL of the webpage to fetch and convert to markdown."
     )
 ):
-    dirname, filename = clean_url_path(url)
-    output_dir = WATCH_DIR / dirname
-    os.makedirs(output_dir, exist_ok=True)
-
-    print(f"Fetching: {url}")
+    output_dir, filename = get_paths(url)
+    html_file = output_dir / f"{filename}.html"
+    md_file = output_dir / f"{filename}.md"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     html_content = fetch_url(url)
-    html_path = os.path.join(output_dir, filename + ".html")
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(html_content)
-    print(f"Saved HTML: {html_path}")
-
     md_content = convert_to_markdown(html_content)
-    md_path = os.path.join(output_dir, filename + ".md")
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write(md_content)
-    print(f"Saved markdown: {md_path}")
-
-    lines = len(md_content.splitlines())
-    print(f"Converted to {lines} lines of markdown")
+    if should_update(html_file, html_content):
+        html_file.write_text(html_content, encoding="utf-8")
+        md_file.write_text(md_content, encoding="utf-8")
+        print(f"Fetched and saved: {url}")
+    else:
+        print(f"Skipped saving {url} since content is unchanged.")
+    if should_update(md_file, md_content):
+        md_file.write_text(md_content, encoding="utf-8")
+        print(f"Markdown updated for: {url}")
+    else:
+        print(f"Skipped updating markdown for {url} since content is unchanged.")
 
 
 @app.command(name="list")
