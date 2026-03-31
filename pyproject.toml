@@ -20,4 +20,4 @@ build-backend = "uv_build"
 
 [project.scripts]
 watch = "uv_agent_workspace.watch:main"
-fetch = "uv_agent_workspace.fetch:cmd"
+fetch = "uv_agent_workspace.fetch:app"

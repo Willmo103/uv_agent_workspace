@@ -1,5 +1,5 @@
 from .watch import main as watch_main
-from .fetch import cmd as web_fetch_cmd
+from .fetch import app as web_fetch_cmd
 
 
 def watch():

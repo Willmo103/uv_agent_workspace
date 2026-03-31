@@ -10,10 +10,12 @@ import typer
 from .config import WATCH_DIR
 
 
-def clean_url_path(url: str) -> str:
+def clean_url_path(url: str) -> tuple[str, str]:
     """Extract base filename from URL, removing query params and fragments."""
     base_url = urlparse(url)
-    return base_url.netloc.replace(".", "_") + base_url.path.replace("/", "_")
+    dirname = base_url.netloc
+    filename = base_url.path.strip("/").replace("/", "_") or "index"
+    return dirname, filename
 
 
 def fetch_url(url: str) -> str:
@@ -31,29 +33,29 @@ def convert_to_markdown(html: str) -> str:
     return parser.handle(html).strip()
 
 
-cmd = typer.Typer(help="Fetch a webpage and convert to markdown.")
+app = typer.Typer(help="Fetch a webpage and convert to markdown.")
 
 
-@cmd.command(name="fetch")
+@app.command()
 def fetch(
     url=typer.Argument(
         ..., help="The URL of the webpage to fetch and convert to markdown."
     )
 ):
-    clean_name = clean_url_path(url)
-    output_dir = WATCH_DIR / clean_name
+    dirname, filename = clean_url_path(url)
+    output_dir = WATCH_DIR / dirname
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Fetching: {url}")
 
     html_content = fetch_url(url)
-    html_path = os.path.join(output_dir, clean_name + ".html")
+    html_path = os.path.join(output_dir, filename + ".html")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"Saved HTML: {html_path}")
 
     md_content = convert_to_markdown(html_content)
-    md_path = os.path.join(output_dir, clean_name + ".md")
+    md_path = os.path.join(output_dir, filename + ".md")
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(md_content)
     print(f"Saved markdown: {md_path}")
@@ -62,5 +64,18 @@ def fetch(
     print(f"Converted to {lines} lines of markdown")
 
 
+@app.command(name="list")
+def list_fetched():
+    """List all fetched webpages in the watch directory."""
+    if not WATCH_DIR.exists():
+        print(f"No fetched webpages found in {WATCH_DIR}")
+        return
+
+    print(f"Fetched webpages in {WATCH_DIR}:")
+    for entry in WATCH_DIR.iterdir():
+        if entry.is_dir():
+            print(f"- {entry.name}")
+
+
 if __name__ == "__main__":
-    cmd()
+    app()

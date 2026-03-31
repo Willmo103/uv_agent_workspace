@@ -1,15 +1,39 @@
-import os
+import time
+import json
 import ollama
 from .config import WATCH_DIR, Path
 
 LOGFILE = WATCH_DIR / "watch_and_describe.log.jsonl"  # json list file
 CLIENT = ollama.Client()
 MODEL = "qwen3.5-agent"
+DESCRIPTION_CACHE = (
+    {}
+)  # in-memory cache to avoid redundant LLM calls for the same content
+CACHE_JSON = WATCH_DIR / "description_cache.json"
+if not CACHE_JSON.exists():
+    CACHE_JSON.touch()
+else:
+    try:
+        with open(CACHE_JSON, "r", encoding="utf-8") as f:
+            DESCRIPTION_CACHE = json.load(f)
+    except Exception as e:
+        print(f"Error loading description cache: {e}")
+        DESCRIPTION_CACHE = {}
+for f in WATCH_DIR.iterdir():
+    if f.is_dir():
+        for file in f.iterdir():
+            if file.suffix == ".md":
+                description_file = file.with_suffix(".description.txt")
+                if description_file.exists():
+                    if not DESCRIPTION_CACHE.get(file.as_posix()):
+                        DESCRIPTION_CACHE[file.as_posix()] = description_file.read_text(
+                            encoding="utf-8"
+                        ).strip()
+CACHE_JSON.write_text(json.dumps(DESCRIPTION_CACHE, indent=2), encoding="utf-8")
 
 
 def format_json_to_single_line(json_obj: dict) -> str:
     """Convert a JSON object to a single-line string."""
-    import json
 
     return json.dumps(json_obj, separators=(",", ":"))
 
@@ -61,38 +85,42 @@ Webpage Content:
 
 def describe_webpage_content(file_path: Path) -> str:
     """Read webpage content from file and get description from LLM."""
+    cache_hit = DESCRIPTION_CACHE.get(file_path.as_posix())
+    if cache_hit:
+        print(f"Cache hit for {file_path.as_posix()}")
+        return cache_hit
     content = file_path.read_text(encoding="utf-8")
     prompt = describe_prompt(content)
     response = CLIENT.chat(MODEL, [{"role": "user", "content": prompt}])
     log_entry = format_json_to_single_line(response.model_dump_json())
-    append_to_logfile({"file_path": file_path, "response": log_entry})
+    DESCRIPTION_CACHE[file_path.as_posix()] = response.message.content.strip()
+    CACHE_JSON.write_text(json.dumps(DESCRIPTION_CACHE, indent=2), encoding="utf-8")
+    append_to_logfile({"file_path": file_path.as_posix(), "response": log_entry})
     return response.message.content.strip()
 
 
 def watch_for_new_md_files():
     """Continuously watch the directory for new markdown files and describe them."""
-    import time
 
     print(f"Watching directory: {WATCH_DIR} for new markdown files...")
     try:
         while True:
-            for filename in os.listdir(WATCH_DIR):
-                if filename.endswith(".md"):
-                    file_path = WATCH_DIR / filename
-                    description_file = WATCH_DIR / (file_path.stem + ".description.txt")
-                    if not description_file.exists():
-                        print(f"New markdown file detected: {filename}")
-                        try:
-                            description = describe_webpage_content(file_path)
-                            description_file.write_text(description, encoding="utf-8")
-                            print(f"Description saved to: {description_file}")
-                        except Exception as e:
-                            print(f"Error describing {filename}: {e}")
-                            append_to_logfile(
-                                format_json_to_single_line(
-                                    {"file_path": file_path, "error": str(e)}
+            for filename in WATCH_DIR.iterdir():
+                if not filename.is_dir():
+                    continue
+                else:
+                    for file in filename.iterdir():
+                        if file.suffix == ".md":
+                            description_file = file.with_suffix(".description.txt")
+                            if not description_file.exists():
+                                print(f"New markdown file found: {file.as_posix()}")
+                                description = describe_webpage_content(file)
+                                description_file.write_text(
+                                    description, encoding="utf-8"
                                 )
-                            )
+                                print(
+                                    f"Description saved to: {description_file.as_posix()}"
+                                )
 
             time.sleep(10)  # check every 10 seconds
     except KeyboardInterrupt:
@@ -106,6 +134,9 @@ def main():
         try:
             watch_for_new_md_files()
             break  # exit loop if successful
+        except KeyboardInterrupt:
+            print("Directory watch interrupted by user.")
+            break
         except Exception as e:
             print(f"Error in main: {e}")
             append_to_logfile(
@@ -113,6 +144,9 @@ def main():
             )
             rettry_count += 1
             print(f"Retrying... ({rettry_count}/5)")
+        if rettry_count >= 5:
+            print("Max retry attempts reached. Exiting.")
+            break
 
 
 if __name__ == "__main__":
