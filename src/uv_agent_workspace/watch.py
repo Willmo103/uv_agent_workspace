@@ -2,35 +2,33 @@ import os
 import time
 import json
 import ollama
-from .config import FETCHED_PAGES, Path
+
+from .config import FETCHED_PAGES, Path, WEB_DESCRIPTION_CACHE_FILE
 
 LOGFILE = FETCHED_PAGES / "watch_and_describe.log.jsonl"  # json list file
 CLIENT = ollama.Client()
 MODEL = "qwen3.5-agent"
-DESCRIPTION_CACHE = (
-    {}
-)  # in-memory cache to avoid redundant LLM calls for the same content
-CACHE_JSON = FETCHED_PAGES / "description_cache.json"
-if not CACHE_JSON.exists():
-    CACHE_JSON.write_text(json.dumps(DESCRIPTION_CACHE, indent=2), encoding="utf-8")
-else:
-    try:
-        with open(CACHE_JSON, "r", encoding="utf-8") as f:
-            DESCRIPTION_CACHE = json.load(f)
-    except Exception as e:
-        print(f"Error loading description cache: {e}")
-        DESCRIPTION_CACHE = {}
+WEB_DESCRIPTION_CACHE = {}
+
+try:
+    with open(WEB_DESCRIPTION_CACHE_FILE, "r", encoding="utf-8") as f:
+        WEB_DESCRIPTION_CACHE = json.load(f)
+except Exception as e:
+    print(f"Error loading description cache: {e}")
+    WEB_DESCRIPTION_CACHE = {}
 for f in FETCHED_PAGES.iterdir():
     if f.is_dir():
         for file in f.iterdir():
             if file.suffix == ".md":
                 description_file = file.with_suffix(".description.txt")
                 if description_file.exists():
-                    if not DESCRIPTION_CACHE.get(file.as_posix()):
-                        DESCRIPTION_CACHE[file.as_posix()] = description_file.read_text(
-                            encoding="utf-8"
-                        ).strip()
-CACHE_JSON.write_text(json.dumps(DESCRIPTION_CACHE, indent=2), encoding="utf-8")
+                    if not WEB_DESCRIPTION_CACHE.get(file.as_posix()):
+                        WEB_DESCRIPTION_CACHE[file.as_posix()] = (
+                            description_file.read_text(encoding="utf-8").strip()
+                        )
+WEB_DESCRIPTION_CACHE_FILE.write_text(
+    json.dumps(WEB_DESCRIPTION_CACHE, indent=2), encoding="utf-8"
+)
 
 
 def format_json_to_single_line(json_obj: dict) -> str:
@@ -86,7 +84,7 @@ Webpage Content:
 
 def describe_webpage_content(file_path: Path) -> str:
     """Read webpage content from file and get description from LLM."""
-    cache_hit = DESCRIPTION_CACHE.get(file_path.as_posix())
+    cache_hit = WEB_DESCRIPTION_CACHE.get(file_path.as_posix())
     if cache_hit:
         print(f"Cache hit for {file_path.as_posix()}")
         return cache_hit
@@ -94,8 +92,10 @@ def describe_webpage_content(file_path: Path) -> str:
     prompt = describe_prompt(content)
     response = CLIENT.chat(MODEL, [{"role": "user", "content": prompt}])
     log_entry = format_json_to_single_line(response.model_dump_json())
-    DESCRIPTION_CACHE[file_path.as_posix()] = response.message.content.strip()
-    CACHE_JSON.write_text(json.dumps(DESCRIPTION_CACHE, indent=2), encoding="utf-8")
+    WEB_DESCRIPTION_CACHE[file_path.as_posix()] = response.message.content.strip()
+    WEB_DESCRIPTION_CACHE_FILE.write_text(
+        json.dumps(WEB_DESCRIPTION_CACHE, indent=2), encoding="utf-8"
+    )
     append_to_logfile({"file_path": file_path.as_posix(), "response": log_entry})
     return response.message.content.strip()
 
@@ -126,6 +126,22 @@ def watch_for_new_md_files():
             time.sleep(10)  # check every 10 seconds
     except KeyboardInterrupt:
         print("Stopping directory watch.")
+
+
+def process_existing_md_files():
+    """Process any existing markdown files in the directory on startup."""
+    for filename in FETCHED_PAGES.iterdir():
+        if not filename.is_dir():
+            continue
+        else:
+            for file in filename.iterdir():
+                if file.suffix == ".md":
+                    description_file = file.with_suffix(".description.txt")
+                    if not description_file.exists():
+                        print(f"Processing existing markdown file: {file.as_posix()}")
+                        description = describe_webpage_content(file)
+                        description_file.write_text(description, encoding="utf-8")
+                        print(f"Description saved to: {description_file.as_posix()}")
 
 
 def main():
