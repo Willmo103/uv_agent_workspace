@@ -88,6 +88,18 @@ def page_mapping() -> dict[str, list[str]]:
     return mapping
 
 
+def list_all_links() -> list[str]:
+    mapping = page_mapping()
+    fetched_sites = []
+    for k in mapping:
+        base_url = f"https://{k}"
+        for entry in mapping[k]:
+            path = entry.replace("_", "/")
+            full_url = f"{base_url}/{path}"
+            fetched_sites.append(full_url)
+    return fetched_sites
+
+
 def process_html_content(
     url: str,
     html: Optional[str] = None,
@@ -144,8 +156,18 @@ def fetch(
 
 
 @app.command(name="list")
-def list_fetched():
+def list_fetched(
+    links: bool = typer.Option(
+        False, "--links", help="List all links found in the fetched HTML files."
+    )
+):
     """List all fetched webpages in the watch directory."""
+    if links:
+        all_links = list_all_links()
+        print("Links found in fetched webpages:")
+        for link in all_links:
+            print(f"- {link}")
+        return
     mapping = page_mapping()
     if not mapping:
         print("No fetched webpages found.")
