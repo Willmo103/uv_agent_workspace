@@ -46,7 +46,7 @@ The goal is to provide a clear and concise summary that captures the essence of 
 - The output should be formatted as a markdown string
 - The output should be provided with retriveal in mind
 - `Obsidian.MD` style tags e.g. `#news` `#documentation` `#data-table` should be used to highlight keywords, topics,
-themes, stand-out details and types of information contained in the webpage.
+themes, stand-out details, and specific types of data contained in the webpage.
   - tags should be included in the description, and should be relevant to the content of the webpage.
   - The tags should help categorize the webpage for easy retrieval later on.
 

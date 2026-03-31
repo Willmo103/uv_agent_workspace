@@ -10,6 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "html2text>=2025.4.15",
     "ollama>=0.6.1",
+    "rich>=14.3.3",
+    "typer>=0.24.1",
 ]
 
 [build-system]

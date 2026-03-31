@@ -7,19 +7,13 @@ from html2text import HTML2Text
 from urllib.parse import urlparse
 import os
 
+from .config import WATCH_DIR
+
 
 def clean_url_path(url: str) -> str:
     """Extract base filename from URL, removing query params and fragments."""
-    base_name = os.path.basename(urlparse(url).path)
-    if base_name:
-        return base_name.split("?")[0].split("#")[0]
-    parsed = urlparse(url)
-    path = parsed.path or "/"
-    if path.startswith("/"):
-        path = path[1:]
-    else:
-        path = ""
-    return f"{parsed.netloc}{path}"
+    base_url = urlparse(url)
+    return base_url.netloc.replace(".", "_") + base_url.path.replace("/", "_")
 
 
 def fetch_url(url: str) -> str:
@@ -40,7 +34,7 @@ def convert_to_markdown(html: str) -> str:
 def main(url):
     """Fetch page, save as HTML and convert to markdown."""
     clean_name = clean_url_path(url)
-    output_dir = os.path.expanduser("~\\fetched_webpages")
+    output_dir = WATCH_DIR / clean_name
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"Fetching: {url}")
