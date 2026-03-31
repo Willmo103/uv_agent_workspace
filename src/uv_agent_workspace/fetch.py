@@ -1,6 +1,6 @@
 """Fetch HTML from web URLs and convert to markdown."""
 
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 from html2text import HTML2Text
@@ -20,13 +20,16 @@ def get_paths(url: str) -> tuple[Path, str]:
     return dirname, filename
 
 
-def extract_links_from_html(html: str) -> list[str]:
+def extract_links_from_html(html: str, base_url: Optional[str] = None) -> list[str]:
     """Extract all hyperlinks from the HTML content."""
 
     soup = BeautifulSoup(html, "html.parser")
     links = []
     for a_tag in soup.find_all("a", href=True):
-        links.append(a_tag["href"])
+        if "https://" in a_tag["href"] or "http://" in a_tag["href"]:
+            links.append(a_tag["href"])
+        if base_url and a_tag["href"].startswith("/"):
+            links.append(base_url + a_tag["href"])
     return links
 
 
@@ -98,6 +101,26 @@ def list_all_links() -> list[str]:
             full_url = f"{base_url}/{path}"
             fetched_sites.append(full_url)
     return fetched_sites
+
+
+def get_files(type: Literal["html", "markdown", "description"]) -> list[Path]:
+    """Return a list of files of the specified type in the fetched pages directory."""
+    suffix_map = {
+        "html": ".html",
+        "markdown": ".md",
+        "description": ".description.txt",
+    }
+    suffix = suffix_map[type]
+    files = []
+    if not FETCHED_PAGES.exists():
+        return files
+
+    for entry in FETCHED_PAGES.iterdir():
+        if entry.is_dir():
+            for file in entry.iterdir():
+                if file.suffix == suffix:
+                    files.append(file)
+    return files
 
 
 def process_html_content(
@@ -180,26 +203,48 @@ def list_fetched(
 
 @app.command(name="links")
 def list_links(
-    url: Optional[str] = typer.Argument(None, help="The URL to extract links from.")
+    url: Optional[str] = typer.Argument(None, help="The URL to extract links from."),
+    rel: bool = typer.Option(
+        False,
+        "-r",
+        "--relative",
+        help="List only links that are relative to the base URL.",
+    ),
 ):
     """List all links found in the fetched HTML file for the given URL."""
 
-    if url is None:
-        print("Please provide a URL to extract links from.")
-        return
-
-    output_dir, filename = get_paths(url)
-    html_file = output_dir / f"{filename}.html"
+    chosen_url = url if url else None
+    while not chosen_url:
+        urls = {i: link for i, link in enumerate(list_all_links())}
+        if not urls:
+            print("No fetched webpages found. Please fetch a webpage first.")
+            return
+        for i, link in urls.items():
+            print(f"{i}: {link}")
+        url_input = typer.prompt(
+            "Enter the number of the URL to extract links from (or 'list' to see URLs again)"
+        )
+        if url_input.lower() == "list":
+            continue
+        try:
+            url_index = int(url_input)
+            if url_index in urls:
+                chosen_url = urls[url_index]
+            else:
+                print("Invalid number. Please try again.")
+        except ValueError:
+            print("Invalid input. Please enter a number or 'list'.")
+    html_file = get_paths(chosen_url)[0] / f"{get_paths(chosen_url)[1]}.html"
     if not html_file.exists():
-        print(f"No fetched HTML found for {url} at {html_file}")
+        print(f"No HTML file found for {chosen_url}. Please fetch the webpage first.")
         return
-
     html_content = html_file.read_text(encoding="utf-8")
-    links = extract_links_from_html(html_content)
-    relative_links = get_relative_links(url, links)
-
-    print(f"Links found in {url}:")
-    for link in relative_links:
+    links = extract_links_from_html(html_content, chosen_url)
+    if not links:
+        print(f"No links found in the HTML file for {chosen_url}.")
+        return
+    print(f"Links found in {chosen_url}:")
+    for link in links:
         print(f"- {link}")
 
 
