@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+
 import typer
 
 from uv_agent_workspace.config import FETCHED_PAGES
@@ -7,248 +8,180 @@ from uv_agent_workspace.config import FETCHED_PAGES
 from .watch import CLIENT, MODEL
 
 
-def discovery_sys_prompt(root_path: str) -> str:
-    """System prompt for discovering and describing important file content in the watched directory."""
-    return f"""
+def get_system_prompt(root_path: str, summary: str = "", current_goal: str = "") -> str:
+    """System prompt for discovering and describing important file content."""
+    base = f"""
 # Discovery Agent
 
-You are very knowledgeable. An expert. Think and respond with confidence.
+You are an expert developer helping a user with ADHD locate and catalog specific python and markdown files.
+You are exploring the directory: {root_path}
 
 ## Workflow
+1. Use `ls_dir` to explore directories. It will tell you file sizes and if a file is already `[SELECTED]`.
+2. Use `read_file` to peek at file contents (limited to 1000 chars by default).
+3. Use `select_file` to catalog important python/markdown files with a reason. Do not select files that are already marked `[SELECTED]`.
+4. Skip irrelevant directories (like .venv, __pycache__, node_modules, etc.) by simply not exploring them.
+"""
+    if summary or current_goal:
+        base += f"""
+## Current State & Goals
+**Summary of Recent Actions:** {summary or "Just starting out."}
+**Current Goal:** {current_goal or "Explore the root directory and find high-value python/markdown files."}
+"""
+    return base
 
-Each iteration you will use the tools to examine and select files and/or exclude paths in the current directory.
-Files that have been removed from the directory tree by being selected or ignored will be removed from the list of
-files in each turn to explore, and the agent will be able to focus on the remaining files.
-The process will continue until there are no more paths left in the context to explore, meaning that the agent has either selected or ignored all paths in the directory.
 
-## Tools
-You have access to the following tools to help you explore and discover important content:
+def get_condensation_prompt() -> str:
+    """Prompt used to ask the LLM to summarize the conversation and dictate the next goal."""
+    return """
+You are a context-manager for an autonomous agent.
+Review the preceding conversation history of the agent's actions (tool calls, file reads, directory listings).
 
-1. `read_file(path: str) -> str`: returns the content of the specified file path.
-2. `change_directory(path: str) -> str`: change the current working directory to the specified path and return the new current directory.
-3. `select_file(path: str, reason: str) -> str`: select a file that you think is important and relevant to the user.
-   reason is a string that explains why you think this file is important and relevant to the user.
-4. `ignore_path(path: str, reason: str) -> str`: ignore a file or directory that you think is not important and relevant to the user.
-   reason is a string that explains why you think this file or directory is not important and relevant to the user. e.g `.venv` directories, `__pycache__` directories, log files, etc.
-
-## User Intent
-The user wants to know in general where specific python and markdown files are on his hard disk, and what they contain.
-The user suffers from ADHD and has trouble keeping track of all the information he has, and where it is stored.
-The user has asked you to explore the directory and find important content that may be relevant to him.
-The process will be agent-guided discovery, where you will run inside of an infinite loop of exploring the directory
-and discovering important content, and then asking the user if they want to know more about any of the content you have discovered.
+Please provide a JSON response with exactly two keys:
+1. "summary": A brief, dense paragraph summarizing what directories the agent just explored and what it found.
+2. "next_goal": A single sentence instructing the agent on what to explore or do next based on where it left off.
 """
 
 
-def build_tree_obj(path: Path) -> dict:
-    """Build a tree object representing the directory structure starting from the given path."""
-    tree = {}
-    for entry in path.iterdir():
-        if entry.is_dir():
-            tree[entry.name] = build_tree_obj(entry)
-        else:
-            tree[entry.name] = None
-    return tree
+class DiscoveryState:
+    """Lightweight state manager to handle the synced JSON and path resolution."""
 
-
-class AgentContext:
     def __init__(self, root_path: str):
         self.root_path = Path(root_path).resolve()
-        self.current_path = self.root_path
-
-        safe_path_name = self.root_path.as_posix().replace("/", "_")
-        self._selected_files_json = (
-            FETCHED_PAGES / f"selected_files.{safe_path_name}.json"
-        )
+        safe_name = self.root_path.name
+        self.json_path = FETCHED_PAGES / f"selected_files.{safe_name}.json"
 
         self.selected_files = {}
-        if self._selected_files_json.exists():
+        if self.json_path.exists():
             try:
                 self.selected_files = json.loads(
-                    self._selected_files_json.read_text(encoding="utf-8")
+                    self.json_path.read_text(encoding="utf-8")
                 )
             except json.JSONDecodeError:
                 pass
 
-        # Use "root" as the explicit top-level key to align with the update logic
-        self.tree = {"root": build_tree_obj(self.root_path)}
-        self.ignored_paths = set()
-
-    def _filter_and_update_tree(self, removed_path: str):
-        """Remove a path from the tree and update the tree structure accordingly."""
-        try:
-            # Get path parts relative to the root directory
-            rel_path = Path(removed_path).resolve().relative_to(self.root_path)
-        except ValueError:
-            return  # Path is outside the root directory; nothing to remove
-
-        def remove_path_from_tree(tree: dict, parts: tuple) -> bool:
-            if not parts:
-                return True  # Signal to remove this node
-
-            current_part = parts[0]
-            if current_part in tree:
-                # If this is the last part, delete it
-                if len(parts) == 1:
-                    del tree[current_part]
-                    return (
-                        not tree
-                    )  # Return True if the current directory becomes empty
-
-                # If it's a sub-directory, recurse
-                if isinstance(tree[current_part], dict):
-                    should_remove = remove_path_from_tree(tree[current_part], parts[1:])
-                    if should_remove:
-                        del tree[current_part]
-                        return not tree
-            return False
-
-        remove_path_from_tree(self.tree["root"], rel_path.parts)
-
-    def _resolve_path(self, path: str) -> Path:
-        """Helper to safely resolve a path against the current working directory."""
-        target_path = Path(path)
-        if not target_path.is_absolute():
-            target_path = self.current_path / target_path
-        return target_path.resolve()
-
-    def list_directory(self, path: str) -> str:
-        """List files and subdirectories in the specified directory path."""
-        target_path = self._resolve_path(path)
-        if not target_path.exists() or not target_path.is_dir():
-            return f"Error: {target_path} is not a valid directory path."
-
-        entries = []
-        for entry in target_path.iterdir():
-            entries.append(f"{entry.name}/" if entry.is_dir() else entry.name)
-        return "\n".join(entries)
-
-    def read_file(self, path: str) -> str:
-        """Read the content of the specified file path."""
-        target_path = self._resolve_path(path)
-        if not target_path.exists() or not target_path.is_file():
-            return f"Error: {target_path} is not a valid file path."
-        return target_path.read_text(encoding="utf-8")
-
-    def change_directory(self, path: str) -> str:
-        """Change the current working directory to the specified path and return the new current directory."""
-        target_path = self._resolve_path(path)
-        if not target_path.exists() or not target_path.is_dir():
-            return f"Error: {target_path} is not a valid directory path."
-
-        self.current_path = target_path
-        return self.current_path.as_posix()
-
-    def select_file(self, path: str, reason: str) -> str:
-        """Select a file that you think is important and relevant to the user."""
-        target_path = self._resolve_path(path)
-        if not target_path.exists() or not target_path.is_file():
-            return f"Error: {target_path} is not a valid file path."
-
-        target_posix = target_path.as_posix()
-        self.selected_files[target_posix] = reason
-        self._selected_files_json.write_text(
+    def save(self):
+        """Sync the current selected files to disk."""
+        self.json_path.parent.mkdir(parents=True, exist_ok=True)
+        self.json_path.write_text(
             json.dumps(self.selected_files, indent=2), encoding="utf-8"
         )
-        self._filter_and_update_tree(
-            target_posix
-        )  # Remove selected file from exploration tree
-        return f"Selected {target_posix} for the following reason: {reason}"
 
-    def ignore_path(self, path: str, reason: str) -> str:
-        """Ignore a file or directory that you think is not important and relevant to the user."""
-        target_path = self._resolve_path(path)
-        if not target_path.exists():
-            return f"Error: {target_path} is not a valid path."
+    def _resolve(self, path: str) -> Path:
+        """Resolve a path safely against the root."""
+        target = Path(path)
+        if not target.is_absolute():
+            target = self.root_path / target
+        return target.resolve()
 
-        target_posix = target_path.as_posix()
-        self.ignored_paths.add(target_posix)
-        self._filter_and_update_tree(
-            target_posix
-        )  # Remove ignored file from exploration tree
-        return f"Ignored {target_posix} for the following reason: {reason}"
+    def ls_dir(self, path: str) -> str:
+        """List directory contents, including file sizes and selection status."""
+        target = self._resolve(path)
+        if not target.exists() or not target.is_dir():
+            return f"Error: {target} is not a valid directory."
 
-    def current_prompt(self) -> str:
-        """Return the current system prompt for the agent based on the current context."""
-        selected_files_str = (
-            "\n".join(
-                f"{path}: {reason}" for path, reason in self.selected_files.items()
-            )
-            or "None"
+        entries = []
+        for entry in target.iterdir():
+            if entry.is_dir():
+                entries.append(f"[DIR]  {entry.name}/")
+            else:
+                size_kb = entry.stat().st_size / 1024
+                status = (
+                    " [SELECTED]" if entry.as_posix() in self.selected_files else ""
+                )
+                entries.append(f"[FILE] {entry.name} ({size_kb:.1f} KB){status}")
+
+        return "\n".join(entries) if entries else "Empty directory."
+
+    def read_file(self, path: str, length: int = 1000) -> str:
+        """Read the content of a file, capped at `length` characters."""
+        target = self._resolve(path)
+        if not target.exists() or not target.is_file():
+            return f"Error: {target} is not a valid file."
+
+        try:
+            content = target.read_text(encoding="utf-8")
+            if len(content) > length:
+                return content[:length] + f"\n...[TRUNCATED AT {length} CHARS]"
+            return content
+        except Exception as e:
+            return f"Error reading file (might be binary): {e}"
+
+    def select_file(self, path: str, reason: str) -> str:
+        """Mark a file as important and sync to disk."""
+        target = self._resolve(path)
+        if not target.exists() or not target.is_file():
+            return f"Error: {target} is not a valid file."
+
+        target_posix = target.as_posix()
+        self.selected_files[target_posix] = reason
+        self.save()
+        return f"Successfully selected {target_posix}. Reason saved."
+
+
+def summarize_history(messages: list) -> tuple[str, str]:
+    """Passes the recent history to the LLM to compress it into a summary and a new goal."""
+    condensation_messages = messages.copy()
+    condensation_messages.append(
+        {"role": "system", "content": get_condensation_prompt()}
+    )
+
+    response = CLIENT.chat(MODEL, condensation_messages)
+
+    try:
+        # Assuming the LLM returns a raw JSON string or markdown JSON block
+        content = (
+            response.message.content.replace("```json", "").replace("```", "").strip()
         )
-
-        ignored_str = "\n".join(self.ignored_paths) or "None"
-
-        remaining_keys = (
-            "\n - ".join(self.tree["root"].keys())
-            if self.tree["root"]
-            else "No files left."
-        )
-
-        return f"""
-# Discovery Agent Context
-
-Current Directory: {self.current_path.as_posix()}
-
-Selected Files:
-{selected_files_str}
-
-Ignored Files and Directories:
-{ignored_str}
-
-Current Directory Structure:
-{remaining_keys}
-"""
+        data = json.loads(content)
+        return data.get("summary", ""), data.get("next_goal", "")
+    except Exception as e:
+        print(f"Failed to parse condensation: {e}")
+        return "Failed to summarize recent actions.", "Continue exploring."
 
 
 def agent_loop(root_path: str):
-    """Main loop for the discovery agent."""
-    context = AgentContext(root_path)
+    """Main execution loop for the agent."""
+    state = DiscoveryState(root_path)
 
-    # Map tool names to their actual functions for easy execution
     tool_map = {
-        "list_directory": context.list_directory,
-        "read_file": context.read_file,
-        "change_directory": context.change_directory,
-        "select_file": context.select_file,
-        "ignore_path": context.ignore_path,
+        "ls_dir": state.ls_dir,
+        "read_file": state.read_file,
+        "select_file": state.select_file,
     }
 
-    # Initialize the conversation history
+    summary = ""
+    current_goal = ""
+
+    # We use a mutable system message at index 0 so we can update it after condensation
     messages = [
-        {"role": "system", "content": discovery_sys_prompt(root_path)},
-        {"role": "user", "content": context.current_prompt()},
+        {
+            "role": "system",
+            "content": get_system_prompt(root_path, summary, current_goal),
+        },
+        {"role": "user", "content": f"Begin exploration of {root_path}."},
     ]
 
-    while context.tree.get("root"):
-        response = CLIENT.chat(
-            MODEL,
-            messages,
-            tools=list(tool_map.values()),
-        )
+    turn_count = 0
+    MAX_TURNS_BEFORE_CONDENSATION = 5  # Adjust based on your context window needs
 
-        # Check if the model wants to call one or more tools
+    while True:
+        response = CLIENT.chat(MODEL, messages, tools=list(tool_map.values()))
+
         if response.message.tool_calls:
-            # 1. Append the assistant's tool-call request to the history
-            # (Most APIs require the assistant's original tool call message to be in the history)
             messages.append(response.message)
 
-            # 2. Execute each tool and append the results as 'tool' messages
             for tool_call in response.message.tool_calls:
                 func_name = tool_call.function.name
                 func_args = tool_call.function.arguments
 
-                print(f"Agent called {func_name} with args: {func_args}")
+                print(f"Executing: {func_name}({func_args})")
 
-                try:
-                    if func_name in tool_map:
-                        result = tool_map[func_name](**func_args)
-                    else:
-                        result = f"Error: Tool {func_name} not found."
-                except Exception as e:
-                    result = f"Error executing tool: {e}"
+                if func_name in tool_map:
+                    result = tool_map[func_name](**func_args)
+                else:
+                    result = f"Error: Tool {func_name} missing."
 
-                # Append the result of the local function execution back to the LLM
                 messages.append(
                     {
                         "role": "tool",
@@ -257,38 +190,63 @@ def agent_loop(root_path: str):
                     }
                 )
 
-            # Continue the loop immediately so the LLM can read the tool results
+            turn_count += 1
+
+            # Condense history if it gets too long
+            if turn_count >= MAX_TURNS_BEFORE_CONDENSATION:
+                print("\n--- Condensing Context ---")
+                summary, current_goal = summarize_history(messages)
+                print(f"New Summary: {summary}\nNew Goal: {current_goal}\n")
+
+                # Reset history: Keep the updated system prompt and the very last interaction
+                messages = [
+                    {
+                        "role": "system",
+                        "content": get_system_prompt(root_path, summary, current_goal),
+                    },
+                    messages[
+                        -2
+                    ],  # Keep the last tool execution result to maintain flow
+                ]
+                turn_count = 0
+
             continue
 
         else:
-            # The agent provided a standard text response instead of a tool call
-            print(f"Agent Response:\n{response.message.content}")
-
-            # Append the assistant's response to maintain conversation flow
+            print(f"\nAgent: {response.message.content}\n")
             messages.append({"role": "assistant", "content": response.message.content})
 
-            # Re-evaluate the context and prompt the agent to keep going
-            # (This reflects the updated directory state after tools were run)
-            messages.append({"role": "user", "content": context.current_prompt()})
+            # Optional: Ask the user for input here to steer the agent,
+            # or auto-prompt it to keep going based on the current goal.
+            user_input = input(
+                "User (press enter to let agent continue, or type a command): "
+            )
+            if user_input.lower() in ["exit", "quit"]:
+                break
+
+            messages.append(
+                {
+                    "role": "user",
+                    "content": user_input or "Continue with the current goal.",
+                }
+            )
 
 
-app = typer.Typer()
+app = typer.Typer(
+    name="discover", help="Discover and catalog important files in a directory."
+)
 
 
-@app.command(name="discover")
+@app.command(name="start")
 def main(
     root_path: str = typer.Argument(
         ...,
-        help="The root directory path to start discovery from.",
+        help="The root directory to start discovery from.",
+        show_default=True,
         exists=True,
         file_okay=False,
         dir_okay=True,
     )
 ):
-    """Main function to start the discovery agent."""
-    context = AgentContext(root_path)
-    print("Starting Discovery Agent with the following context:")
-    print(context.current_prompt())
-
-    # Execute the loop (omitted from the original snippet but necessary for flow)
+    print(f"Starting Discovery Agent in {root_path}...")
     agent_loop(root_path)
