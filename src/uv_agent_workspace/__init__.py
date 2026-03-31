@@ -1,5 +1,5 @@
 from .watch import main as watch_main
-from .fetch import main as web_fetch_main
+from .fetch import cmd as web_fetch_cmd
 
 
 def watch():
@@ -9,4 +9,4 @@ def watch():
 
 def fetch(url):
     """Fetch a webpage and convert to markdown."""
-    web_fetch_main(url)
+    web_fetch_cmd()

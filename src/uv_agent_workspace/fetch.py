@@ -1,11 +1,13 @@
 """Fetch HTML from web URLs and convert to markdown."""
 
-import sys
+from typing import Optional
 
 import httpx
 from html2text import HTML2Text
 from urllib.parse import urlparse
 import os
+
+import typer
 
 from .config import WATCH_DIR
 
@@ -31,8 +33,15 @@ def convert_to_markdown(html: str) -> str:
     return parser.handle(html).strip()
 
 
-def main(url):
-    """Fetch page, save as HTML and convert to markdown."""
+cmd = typer.Typer(help="Fetch a webpage and convert to markdown.")
+
+
+@cmd.command(name="fetch")
+def fetch(
+    url=typer.Argument(
+        ..., help="The URL of the webpage to fetch and convert to markdown."
+    )
+):
     clean_name = clean_url_path(url)
     output_dir = WATCH_DIR / clean_name
     os.makedirs(output_dir, exist_ok=True)
@@ -56,5 +65,4 @@ def main(url):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        main(sys.argv[1])
+    cmd()
