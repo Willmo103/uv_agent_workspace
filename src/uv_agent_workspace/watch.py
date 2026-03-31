@@ -12,7 +12,7 @@ DESCRIPTION_CACHE = (
 )  # in-memory cache to avoid redundant LLM calls for the same content
 CACHE_JSON = FETCHED_PAGES / "description_cache.json"
 if not CACHE_JSON.exists():
-    CACHE_JSON.touch()
+    CACHE_JSON.write_text(json.dumps(DESCRIPTION_CACHE, indent=2), encoding="utf-8")
 else:
     try:
         with open(CACHE_JSON, "r", encoding="utf-8") as f:
