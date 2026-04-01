@@ -1,7 +1,7 @@
 import os
 
 import typer
-from .config import DB, PERCICE_MODEL, CLIENT, SMALL_MODEL, get_local_time
+from .config import DB, CLIENT, GENERAL_MODEL, get_local_time
 from .imports import Path, Literal, BaseModel, datetime, Optional
 from .describe import store_description
 from .models import DescriptionEntry
@@ -404,16 +404,16 @@ def main(path: Optional[str] = None):
                     if step == "think":
                         prompt = thinking_prompt()
                         response = CLIENT.chat(
-                            model=SMALL_MODEL,
+                            model=GENERAL_MODEL,
                             messages=__MESSAGE_HISTORY
                             + [{"role": "user", "content": prompt}],
                             tools=tools,
-                            think=True,
+                            think=False,
                         )
                     elif step == "act":
                         prompt = choice_prompt()
                         response = CLIENT.chat(
-                            model=SMALL_MODEL,
+                            model=GENERAL_MODEL,
                             messages=__MESSAGE_HISTORY
                             + [{"role": "user", "content": prompt}],
                             tools=tools,
@@ -422,10 +422,11 @@ def main(path: Optional[str] = None):
                     elif step == "reflect":
                         prompt = reflection_prompt()
                         response = CLIENT.chat(
-                            model=SMALL_MODEL,
+                            model=GENERAL_MODEL,
                             messages=__MESSAGE_HISTORY
                             + [{"role": "user", "content": prompt}],
                             tools=tools,
+                            think=False,
                         )
 
                     __MESSAGE_HISTORY.append({"role": "user", "content": prompt})
@@ -515,6 +516,12 @@ def main(path: Optional[str] = None):
                     f"Completed phase [{step.upper()}] for {path_name}",
                     color=typer.colors.GREEN,
                     icon="✔",
+                )
+                __MESSAGE_HISTORY.append(
+                    {
+                        "role": "system",
+                        "content": system_prompt(),
+                    }
                 )
 
             _status(

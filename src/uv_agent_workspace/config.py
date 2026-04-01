@@ -33,4 +33,6 @@ if not WEB_DESCRIPTION_CACHE_FILE.exists():
 CLIENT = ollama.Client()
 PERCICE_MODEL = "qwen3.5-agent"
 SMALL_MODEL = "qwen3.5-small"
+GENERAL_MODEL = "qwen3.5-general"
+
 DB = sqlite_utils.Database(APP_DATA / "uv_agent.db")
