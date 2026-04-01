@@ -2,7 +2,7 @@ from typing import Optional
 
 import typer
 
-from .config import CLIENT, DESCRIBED_FILES, Path, PERCICE_MODEL
+from .config import CLIENT, DESCRIBED_FILES, PERCICE_MODEL, Path, SMALL_MODEL
 
 
 def _get_paths(path: str) -> tuple[Path, str]:
@@ -109,7 +109,7 @@ def describe_file_content(path: str, reason: str, content: str) -> str:
         return description
     prompt = description_prompt(path, reason, content)
     response = CLIENT.chat(
-        PERCICE_MODEL, [{"role": "user", "content": prompt}], think="low"
+        PERCICE_MODEL, [{"role": "user", "content": prompt}], think=True
     )
     resp_text = response.message.content.strip()
     store_description(path, resp_text)
