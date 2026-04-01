@@ -2,7 +2,7 @@ import typer
 import json
 from pathlib import Path
 
-from .config import MODEL, CLIENT, FETCHED_PAGES
+from .config import PERCICE_MODEL, CLIENT, FETCHED_PAGES
 
 
 def get_system_prompt(root_path: str, summary: str = "", current_goal: str = "") -> str:
@@ -123,7 +123,7 @@ def summarize_history(messages: list) -> tuple[str, str]:
         {"role": "system", "content": get_condensation_prompt()}
     )
 
-    response = CLIENT.chat(MODEL, condensation_messages)
+    response = CLIENT.chat(PERCICE_MODEL, condensation_messages)
 
     try:
         # Assuming the LLM returns a raw JSON string or markdown JSON block
@@ -163,7 +163,7 @@ def agent_loop(root_path: str):
     MAX_TURNS_BEFORE_CONDENSATION = 5  # Adjust based on your context window needs
 
     while True:
-        response = CLIENT.chat(MODEL, messages, tools=list(tool_map.values()))
+        response = CLIENT.chat(PERCICE_MODEL, messages, tools=list(tool_map.values()))
 
         if response.message.tool_calls:
             messages.append(response.message)

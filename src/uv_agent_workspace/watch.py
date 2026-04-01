@@ -3,7 +3,13 @@ import time
 import json
 
 
-from .config import FETCHED_PAGES, Path, WEB_DESCRIPTION_CACHE_FILE, CLIENT, MODEL
+from .config import (
+    FETCHED_PAGES,
+    Path,
+    WEB_DESCRIPTION_CACHE_FILE,
+    CLIENT,
+    PERCICE_MODEL,
+)
 
 LOGFILE = FETCHED_PAGES / "watch_and_describe.log.jsonl"  # json list file
 WEB_DESCRIPTION_CACHE = {}
@@ -88,7 +94,7 @@ def describe_webpage_content(file_path: Path) -> str:
         return cache_hit
     content = file_path.read_text(encoding="utf-8")
     prompt = describe_prompt(content)
-    response = CLIENT.chat(MODEL, [{"role": "user", "content": prompt}])
+    response = CLIENT.chat(PERCICE_MODEL, [{"role": "user", "content": prompt}])
     log_entry = format_json_to_single_line(response.model_dump_json())
     WEB_DESCRIPTION_CACHE[file_path.as_posix()] = response.message.content.strip()
     WEB_DESCRIPTION_CACHE_FILE.write_text(
