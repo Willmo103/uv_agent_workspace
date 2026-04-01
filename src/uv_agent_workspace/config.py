@@ -1,7 +1,22 @@
-import json
-from pathlib import Path
 import ollama
 import sqlite_utils
+from .imports import Path, json, datetime, timezone
+
+
+# determine the server tz
+def get_local_time() -> datetime:
+    """Get the local time with timezone information."""
+    local_time = datetime.now().astimezone()
+    print(f"Local time: {local_time}")
+    return local_time
+
+
+def get_utc_time() -> datetime:
+    """Get the current UTC time."""
+    utc_time = datetime.now(timezone.utc)
+    print(f"UTC time: {utc_time}")
+    return utc_time
+
 
 FETCHED_PAGES = Path("~/fetched_webpages").expanduser()
 DESCRIBED_FILES = Path("~/described_files").expanduser()

@@ -2,10 +2,9 @@ import os
 import time
 import json
 
-
+from .imports import Path
 from .config import (
     FETCHED_PAGES,
-    Path,
     WEB_DESCRIPTION_CACHE_FILE,
     CLIENT,
     PERCICE_MODEL,

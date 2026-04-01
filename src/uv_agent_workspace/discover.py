@@ -1,248 +1,166 @@
 import typer
-import json
-from .config import PERCICE_MODEL, CLIENT, FETCHED_PAGES
-from .imports import Path
+from .config import PERCICE_MODEL, CLIENT, FETCHED_PAGES, get_local_time
+from .imports import Path, Literal, BaseModel, datetime, Optional
+from .describe import store_description
+from .models import DescriptionEntry
 
+_CURRENT_ROOT: str = ""
+_CURRENT_FILES: list[str] = []
+_CURRENT_DIRS: list[str] = []
+_PATH_BEING_CONSIDERED: Optional[str] = None
+_USER_SELECTED_ROOT: Optional[str] = None
 
-def get_system_prompt(root_path: str, summary: str = "", current_goal: str = "") -> str:
-    """System prompt for discovering and describing important file content."""
-    base = f"""
-# Discovery Agent
+class AgentMemory(BaseModel):
+    id: Optional[int] = None
+    timestamp: datetime
+    memory: str
 
-You are an expert developer helping a user with ADHD locate and catalog specific python and markdown files.
-You are exploring the directory: {root_path}
+class IgnoredFile(BaseModel):
+    file_path: str
+    reason: str
 
-## Workflow
-1. Use `ls_dir` to explore directories. It will tell you file sizes and if a file is already `[SELECTED]`.
-2. Use `read_file` to peek at file contents (limited to 1000 chars by default).
-3. Use `select_file` to catalog important python/markdown files with a reason. Do not select files that are already marked `[SELECTED]`.
-4. Skip irrelevant directories (like .venv, __pycache__, node_modules, etc.) by simply not exploring them.
-"""
-    if summary or current_goal:
-        base += f"""
-## Current State & Goals
-**Summary of Recent Actions:** {summary or "Just starting out."}
-**Current Goal:** {current_goal or "Explore the root directory and find high-value python/markdown files."}
-"""
-    return base
-
-
-def get_condensation_prompt() -> str:
-    """Prompt used to ask the LLM to summarize the conversation and dictate the next goal."""
-    return """
-You are a context-manager for an autonomous agent.
-Review the preceding conversation history of the agent's actions (tool calls, file reads, directory listings).
-
-Please provide a JSON response with exactly two keys:
-1. "summary": A brief, dense paragraph summarizing what directories the agent just explored and what it found.
-2. "next_goal": A single sentence instructing the agent on what to explore or do next based on where it left off.
-"""
-
-
-class DiscoveryState:
-    """Lightweight state manager to handle the synced JSON and path resolution."""
-
-    def __init__(self, root_path: str):
-        self.root_path = Path(root_path).resolve()
-        safe_name = self.root_path.name
-        self.json_path = FETCHED_PAGES / f"selected_files.{safe_name}.json"
-
-        self.selected_files = {}
-        if self.json_path.exists():
-            try:
-                self.selected_files = json.loads(
-                    self.json_path.read_text(encoding="utf-8")
-                )
-            except json.JSONDecodeError:
-                pass
-
-    def save(self):
-        """Sync the current selected files to disk."""
-        self.json_path.parent.mkdir(parents=True, exist_ok=True)
-        self.json_path.write_text(
-            json.dumps(self.selected_files, indent=2), encoding="utf-8"
-        )
-
-    def _resolve(self, path: str) -> Path:
-        """Resolve a path safely against the root."""
-        target = Path(path)
-        if not target.is_absolute():
-            target = self.root_path / target
-        return target.resolve()
-
-    def ls_dir(self, path: str) -> str:
-        """List directory contents, including file sizes and selection status."""
-        target = self._resolve(path)
-        if not target.exists() or not target.is_dir():
-            return f"Error: {target} is not a valid directory."
-
-        entries = []
-        for entry in target.iterdir():
-            if entry.is_dir():
-                entries.append(f"[DIR]  {entry.name}/")
-            else:
-                size_kb = entry.stat().st_size / 1024
-                status = (
-                    " [SELECTED]" if entry.as_posix() in self.selected_files else ""
-                )
-                entries.append(f"[FILE] {entry.name} ({size_kb:.1f} KB){status}")
-
-        return "\n".join(entries) if entries else "Empty directory."
-
-    def read_file(self, path: str, length: int = 1000) -> str:
-        """Read the content of a file, capped at `length` characters."""
-        target = self._resolve(path)
-        if not target.exists() or not target.is_file():
-            return f"Error: {target} is not a valid file."
-
-        try:
-            content = target.read_text(encoding="utf-8")
-            if len(content) > length:
-                return content[:length] + f"\n...[TRUNCATED AT {length} CHARS]"
-            return content
-        except Exception as e:
-            return f"Error reading file (might be binary): {e}"
-
-    def select_file(self, path: str, reason: str) -> str:
-        """Mark a file as important and sync to disk."""
-        target = self._resolve(path)
-        if not target.exists() or not target.is_file():
-            return f"Error: {target} is not a valid file."
-
-        target_posix = target.as_posix()
-        self.selected_files[target_posix] = reason
-        self.save()
-        return f"Successfully selected {target_posix}. Reason saved."
-
-
-def summarize_history(messages: list) -> tuple[str, str]:
-    """Passes the recent history to the LLM to compress it into a summary and a new goal."""
-    condensation_messages = messages.copy()
-    condensation_messages.append(
-        {"role": "system", "content": get_condensation_prompt()}
-    )
-
-    response = CLIENT.chat(PERCICE_MODEL, condensation_messages)
-
-    try:
-        # Assuming the LLM returns a raw JSON string or markdown JSON block
-        content = (
-            response.message.content.replace("```json", "").replace("```", "").strip()
-        )
-        data = json.loads(content)
-        return data.get("summary", ""), data.get("next_goal", "")
-    except Exception as e:
-        print(f"Failed to parse condensation: {e}")
-        return "Failed to summarize recent actions.", "Continue exploring."
-
-
-def agent_loop(root_path: str):
-    """Main execution loop for the agent."""
-    state = DiscoveryState(root_path)
-
-    tool_map = {
-        "ls_dir": state.ls_dir,
-        "read_file": state.read_file,
-        "select_file": state.select_file,
-    }
-
-    summary = ""
-    current_goal = ""
-
-    # We use a mutable system message at index 0 so we can update it after condensation
-    messages = [
-        {
-            "role": "system",
-            "content": get_system_prompt(root_path, summary, current_goal),
-        },
-        {"role": "user", "content": f"Begin exploration of {root_path}."},
-    ]
-
-    turn_count = 0
-    MAX_TURNS_BEFORE_CONDENSATION = 5  # Adjust based on your context window needs
-
-    while True:
-        response = CLIENT.chat(PERCICE_MODEL, messages, tools=list(tool_map.values()))
-
-        if response.message.tool_calls:
-            messages.append(response.message)
-
-            for tool_call in response.message.tool_calls:
-                func_name = tool_call.function.name
-                func_args = tool_call.function.arguments
-
-                print(f"Executing: {func_name}({func_args})")
-
-                if func_name in tool_map:
-                    result = tool_map[func_name](**func_args)
-                else:
-                    result = f"Error: Tool {func_name} missing."
-
-                messages.append(
-                    {
-                        "role": "tool",
-                        "name": func_name,
-                        "content": str(result),
-                    }
-                )
-
-            turn_count += 1
-
-            # Condense history if it gets too long
-            if turn_count >= MAX_TURNS_BEFORE_CONDENSATION:
-                print("\n--- Condensing Context ---")
-                summary, current_goal = summarize_history(messages)
-                print(f"New Summary: {summary}\nNew Goal: {current_goal}\n")
-
-                # Reset history: Keep the updated system prompt and the very last interaction
-                messages = [
-                    {
-                        "role": "system",
-                        "content": get_system_prompt(root_path, summary, current_goal),
-                    },
-                    messages[
-                        -2
-                    ],  # Keep the last tool execution result to maintain flow
-                ]
-                turn_count = 0
-
-            continue
-
+def generate_tree_str():
+    if not any([_CURRENT_ROOT, _CURRENT_FILES, _CURRENT_DIRS, _PATH_BEING_CONSIDERED, _USER_SELECTED_ROOT]):
+        return "No directory currently being explored."
+    base_root = Path(_USER_SELECTED_ROOT)
+    current_root = Path(_CURRENT_ROOT)
+    relative_root = current_root.relative_to(base_root)
+    tree_str = f"Current Root: {relative_root}\n"
+    for dir in _CURRENT_DIRS:
+        tree_str += f"  - {dir}/\n"
+    for file in _CURRENT_FILES:
+        file = Path(file)
+        # display the file size in bytes
+        file_size = file.stat().st_size
+        if file.as_posix() == _PATH_BEING_CONSIDERED:
+            tree_str += f"  - [CONSIDERING] {file.name} ({file_size} bytes)\n"
         else:
-            print(f"\nAgent: {response.message.content}\n")
-            messages.append({"role": "assistant", "content": response.message.content})
+          tree_str += f"  - {file.name} ({file_size} bytes)\n"
 
-            # Optional: Ask the user for input here to steer the agent,
-            # or auto-prompt it to keep going based on the current goal.
-            user_input = input(
-                "User (press enter to let agent continue, or type a command): "
-            )
-            if user_input.lower() in ["exit", "quit"]:
-                break
+DISCOVERY_GOAL = """
+## Discovery Goal
+- Discover files
+  - Identify files of interest (markdown, source code, config files, documentation, images) in the chosen root directory
+  - Limit ingestion of standard library files, dependencies, and other files that are not directly relevant to the user's own codebases and projects.
+    e.g. avoid describing files in `node_modules`, `venv`, `__pycache__`, `dist-packages`, etc.
+  - The user is a software developer with ADHD and creates many repositories and files but struggles to keep track of them all.
+  - The user wants this team of agents to operate in the chosen root directories and build a knowledge graph via descriptions
+    and tags for realevent directories and codebases they have created.
+  - The user wants the agents to be decisive and selective in which files they choose to describe and add to the knowledge graph.
+- Avoid Bloat
+  - Avoid describing system files, non-utf8 encoded files, and other files that are not directly relevant to the user's own codebases, personal information, notes, or projects.
+  - Avoid empty or near-empty files.
+  - Skip directories quickly if they contain a large number of files that are not relevant to the user's own codebases and projects: e.g. `.config`, `.git`, `.conda`,
+    `package-lock.json`, `node_modules`, `venv`, `__pycache__`, `dist-packages`, etc.
 
-            messages.append(
-                {
-                    "role": "user",
-                    "content": user_input or "Continue with the current goal.",
-                }
-            )
+"""
+# -- Prompts --
+
+def reflection_prompt(last_path: str) -> str:
+    current_time = get_local_time().isoformat()
+    return f"""
+---
+current_time: {current_time}
+last_path: {last_path}
+---
+# Phase 3: Reflect on actions taken and reasoning
+
+## Task
+
+**Part 1:**
+
+Reflect on the actions taken and the reasoning behind those actions. Consider the following questions:
+- Why did you choose to take the actions you did?
+- What made you feel confident in those actions?
+- How do those actions and the reasoning behind them relate to the overall discovery goal?
+
+**Part 2:**
+
+When you feel ready, use the `add_agent_memory` tool to commit what you want to your
+memory.
+ - feel free to draw assumptions about the user and their preferences based on the files you have seen and described so far.
+ - memories are searchable, and span across sessions, so consider how what you assume will evolve over time through exposure to more files and information about the user.
+
+"""
+
+def choice_prompt(path: str) -> str:
+    return f"""
+# Phase 2: Make a choice about the file/directory
+
+## Task
+
+Use the `path_choice` tool to choose whether to skip describing the current file/directory or add it to the knowledge graph.
+
+"""
+
+def thinking_prompt() -> str:
+    global _CURRENT_ROOT, _CURRENT_FILES, _CURRENT_DIRS, _PATH_BEING_CONSIDERED, _USER_SELECTED_ROOT
+    base_root = Path(_USER_SELECTED_ROOT)
+    current_root = Path(_CURRENT_ROOT)
+    relative_root = current_root.relative_to(base_root) if _USER_SELECTED_ROOT else _CURRENT_ROOT
+
+    tree_str = generate_tree_str()
+    return f"""
+---
+Current Time: {get_local_time().isoformat()}
+Current Root (relative to user selected root): {relative_root}
+---
+# Phase 1: Consider the greater context
+
+## Task
+
+Use the file tree below to understand the greater context of the file currently being considered in order to determine
+if you should add or ignore the file/directory.
+
+- Think about which path is being considered, and it's potential relevance in the current root's context.
+- Consider the types of files and directories in the current root, and how the path being considered relates to them.
+- Consider the overall discovery goal and how the path being considered might relate to it.
+
+## Tools
+
+In order to further aid you in your decision, you can use the `preview_file_content` tool to see a brief preview of the content of the file being considered.
+
+## Current File Tree Context
+
+```
+{tree_str}
+```
+
+"""
+# -- Tools --
+
+def preview_file_content(file_path: str) -> str:
+    """Preview the content of a file, limited to the first 500 characters."""
+    if not Path(file_path).exists():
+        return "File does not exist."
+    if
+    try:
+        content = Path(file_path).read_text(encoding="utf-8")
+        return content[:500]
+    except Exception as e:
+        return f"Could not read file content: {e}"
+
+def add_agent_memory(memory: str):
+    """Add a memory to the agent's memory store."""
+    entry = AgentMemory(timestamp=datetime.now(), memory=memory)
+    # Store the memory in the database or a file
+    # For simplicity, we'll just print it here
+    print(f"Memory added: {entry.memory} at {entry.timestamp}")
 
 
-app = typer.Typer(
-    name="discover", help="Discover and catalog important files in a directory."
-)
+def path_choice(choice: Literal["skip", "add"], reason: str) -> str:
+    """
+    Choose whether to skip describing the current file/directory.
 
-
-@app.command(name="start")
-def main(
-    root_path: str = typer.Argument(
-        ...,
-        help="The root directory to start discovery from.",
-        show_default=True,
-        exists=True,
-        file_okay=False,
-        dir_okay=True,
-    )
-):
-    print(f"Starting Discovery Agent in {root_path}...")
-    agent_loop(root_path)
+    Args:
+        choice: Literal["skip", "add"] - Choice to either skip current file/directory or add it to the knowledge graph.
+        reason: str - Reason for the choice made.
+    Returns:
+        str: "skip" if the file/directory should be skipped, "add" if it should be added to the knowledge graph.
+    """
+    if choice == "skip":
+        return "skip"
+    elif choice == "add":
+        return "add"
+    else:
+        raise ValueError("Invalid choice. Must be 'skip' or 'add'.")
