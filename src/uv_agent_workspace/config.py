@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import ollama
 
 FETCHED_PAGES = Path("~/fetched_webpages").expanduser()
 
@@ -14,3 +15,6 @@ if not DESCRIBED_FILES.exists():
 WEB_DESCRIPTION_CACHE_FILE = FETCHED_PAGES / "description_cache.json"
 if not WEB_DESCRIPTION_CACHE_FILE.exists():
     WEB_DESCRIPTION_CACHE_FILE.write_text(json.dumps("{}", indent=2), encoding="utf-8")
+
+CLIENT = ollama.Client()
+MODEL = "qwen3.5-agent"

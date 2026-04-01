@@ -1,11 +1,8 @@
+import typer
 import json
 from pathlib import Path
 
-import typer
-
-from uv_agent_workspace.config import FETCHED_PAGES
-
-from .watch import CLIENT, MODEL
+from .config import MODEL, CLIENT, FETCHED_PAGES
 
 
 def get_system_prompt(root_path: str, summary: str = "", current_goal: str = "") -> str:

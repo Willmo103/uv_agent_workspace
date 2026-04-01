@@ -1,7 +1,6 @@
 import typer
 
-from uv_agent_workspace.config import DESCRIBED_FILES, Path
-from uv_agent_workspace.watch import CLIENT, MODEL
+from .config import CLIENT, DESCRIBED_FILES, Path, MODEL
 
 
 def store_description(path: str, description: str):

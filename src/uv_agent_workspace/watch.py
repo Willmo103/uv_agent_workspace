@@ -1,13 +1,11 @@
 import os
 import time
 import json
-import ollama
 
-from .config import FETCHED_PAGES, Path, WEB_DESCRIPTION_CACHE_FILE
+
+from .config import FETCHED_PAGES, Path, WEB_DESCRIPTION_CACHE_FILE, CLIENT, MODEL
 
 LOGFILE = FETCHED_PAGES / "watch_and_describe.log.jsonl"  # json list file
-CLIENT = ollama.Client()
-MODEL = "qwen3.5-agent"
 WEB_DESCRIPTION_CACHE = {}
 
 try:
