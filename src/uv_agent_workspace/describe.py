@@ -30,7 +30,7 @@ def store_description(path: str, description: str):
     description_file.write_text(description, encoding="utf-8")
 
 
-def get_description(path: str) -> Optional[str]:
+def retrieve_file_description(path: str) -> Optional[str]:
     """Retrieve the stored description for a given file path, if it exists."""
     dir_path, filename = _get_paths(path)
     description_file = dir_path / filename
@@ -39,8 +39,14 @@ def get_description(path: str) -> Optional[str]:
     return None
 
 
-def list_described_files(links: bool = False) -> dict[str, list[str]]:
-    """List all files that have been described, organized by their directory."""
+def get_file_description_tree(links: bool = False) -> dict[str, list[str]]:
+    """
+    Return a dictionary mapping directory names to lists of described files. If `links` is True, the file names will be formatted as markdown links to their original paths.
+     - The directory names are derived from the structure of the DESCRIBED_FILES directory.
+     - The file names are derived from the description files, with the `.description.txt` suffix removed.
+     - If `links` is True, the file names will be formatted as markdown links to their original paths, using the original file path derived from the description file name.
+     - The original file path is reconstructed by replacing dots in the description file name with slashes and removing the `.description` suffix.
+    """
     described_files = {}
 
     for entry in DESCRIBED_FILES.iterdir():
@@ -98,7 +104,7 @@ themes, stand-out details, and specific types of data contained in the file.
 
 def describe_file_content(path: str, reason: str, content: str) -> str:
     """Generate a description for a file's content using the LLM."""
-    description = get_description(path)
+    description = retrieve_file_description(path)
     if description:
         return description
     prompt = description_prompt(path, reason, content)
@@ -149,7 +155,7 @@ def list_described(
         help="List all described files with links to their original paths.",
     )
 ):
-    described_files = list_described_files(links)
+    described_files = get_file_description_tree(links)
     if not described_files:
         print("No files have been described yet.")
         return
