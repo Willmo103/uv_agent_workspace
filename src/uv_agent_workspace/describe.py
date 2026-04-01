@@ -42,8 +42,6 @@ def get_description(path: str) -> Optional[str]:
 def list_described_files(links: bool = False) -> dict[str, list[str]]:
     """List all files that have been described, organized by their directory."""
     described_files = {}
-    if not DESCRIBED_FILES.exists():
-        return described_files
 
     for entry in DESCRIBED_FILES.iterdir():
         if entry.is_dir():
