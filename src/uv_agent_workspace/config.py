@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import ollama
+import sqlite_utils
 
 FETCHED_PAGES = Path("~/fetched_webpages").expanduser()
 DESCRIBED_FILES = Path("~/described_files").expanduser()
@@ -17,3 +18,4 @@ if not WEB_DESCRIPTION_CACHE_FILE.exists():
 CLIENT = ollama.Client()
 PERCICE_MODEL = "qwen3.5-agent"
 SMALL_MODEL = "qwen3.5-small"
+DB = sqlite_utils.Database(APP_DATA / "uv_agent.db")

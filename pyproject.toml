@@ -13,6 +13,7 @@ dependencies = [
     "html2text>=2025.4.15",
     "ollama>=0.6.1",
     "rich>=14.3.3",
+    "sqlite-utils>=3.39",
     "typer>=0.24.1",
     "uvicorn>=0.42.0",
 ]

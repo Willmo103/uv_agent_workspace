@@ -1,70 +1,41 @@
-from typing import Optional
-
 import typer
 
-from .config import CLIENT, DESCRIBED_FILES, PERCICE_MODEL, Path, SMALL_MODEL
+from .imports import Optional
+from .models import DescriptionEntry
+from .config import CLIENT, Path, SMALL_MODEL, DB
 
 
-def _get_paths(path: str) -> tuple[Path, str]:
-    """Return the directory Path and filename for a given file path.
-    The directory is determined by the DESCRIBED_FILES directory and the file path, with slashes replaced by dots.
-    The filename is the name of the file being described.
-    """
-    target = Path(path)
-    if not target.is_absolute():
-        target = target.resolve()
-    dir_path = DESCRIBED_FILES / (
-        target.as_posix().replace("/", ".").replace("\\", ".")
-    )
-    filename = target.name + ".description.txt"
-
-    return dir_path, filename
+def store_description(entry: DescriptionEntry):
+    """Store a file description in the DESCRIBED_FILES directory."""
+    DB["file_descriptions"].insert(entry.model_dump(), pk="file_path")
 
 
-def store_description(path: str, description: str):
-    """Store the generated description in a text file for later retrieval."""
-    dir_path, filename = _get_paths(path)
-    if not dir_path.exists():
-        dir_path.mkdir(parents=True, exist_ok=True)
-    description_file = dir_path / filename
-    description_file.write_text(description, encoding="utf-8")
-
-
-def retrieve_file_description(path: str) -> Optional[str]:
-    """Retrieve the stored description for a given file path, if it exists."""
-    dir_path, filename = _get_paths(path)
-    description_file = dir_path / filename
-    if description_file.exists():
-        return description_file.read_text(encoding="utf-8")
-    return None
+def retrieve_file_description(file_path: str) -> Optional[str]:
+    """Retrieve a file description from the database."""
+    try:
+        entry = DB["file_descriptions"].rows_where("file_path = ?", [file_path])
+        for e in entry:
+            return e["description"]
+        return None
+    except Exception:
+        return None
 
 
 def get_file_description_tree(links: bool = False) -> dict[str, list[str]]:
-    """
-    Return a dictionary mapping directory names to lists of described files. If `links` is True, the file names will be formatted as markdown links to their original paths.
-     - The directory names are derived from the structure of the DESCRIBED_FILES directory.
-     - The file names are derived from the description files, with the `.description.txt` suffix removed.
-     - If `links` is True, the file names will be formatted as markdown links to their original paths, using the original file path derived from the description file name.
-     - The original file path is reconstructed by replacing dots in the description file name with slashes and removing the `.description` suffix.
-    """
-    described_files = {}
-
-    for entry in DESCRIBED_FILES.iterdir():
-        if entry.is_dir():
-            descriptions = []
-            for file in entry.iterdir():
-                if file.suffix == ".description.txt":
-                    if links:
-                        original_path = file.stem.replace(".description", "").replace(
-                            ".", "/"
-                        )
-                        descriptions.append(
-                            f"[{file.stem.replace('.description', '')}]({original_path})"
-                        )
-                    else:
-                        descriptions.append(file.stem.replace(".description", ""))
-            described_files[entry.name] = descriptions
-    return described_files
+    """Return a tree of described files organized by directory, optionally including clickable links."""
+    entries = DB["file_descriptions"].rows
+    tree = {}
+    for entry in entries:
+        path = Path(entry["file_path"])
+        dir_name = path.parent.name
+        file_name = path.name
+        if dir_name not in tree:
+            tree[dir_name] = []
+        if links:
+            tree[dir_name].append(f"[{file_name}]({entry['file_path']})")
+        else:
+            tree[dir_name].append(file_name)
+    return tree
 
 
 def description_prompt(path: str, reason: str, content: str) -> str:
@@ -104,16 +75,25 @@ themes, stand-out details, and specific types of data contained in the file.
 
 def describe_file_content(path: str, reason: str, content: str) -> str:
     """Generate a description for a file's content using the LLM."""
-    description = retrieve_file_description(path)
-    if description:
-        return description
+    try:
+        description = retrieve_file_description(path)
+        if description:
+            return description
+    except Exception as e:
+        print(f"Error retrieving description from database: {e}")
     prompt = description_prompt(path, reason, content)
-    response = CLIENT.chat(
-        PERCICE_MODEL, [{"role": "user", "content": prompt}], think=True
-    )
-    resp_text = response.message.content.strip()
-    store_description(path, resp_text)
-    return response.message.content.strip()
+    try:
+
+        response = CLIENT.chat(
+            SMALL_MODEL, [{"role": "user", "content": prompt}], think=True
+        )
+        resp_text = response.message.content.strip()
+        entry = DescriptionEntry(file_path=path, reason=reason, description=resp_text)
+        store_description(entry)
+        return response.message.content.strip()
+    except Exception as e:
+        print(f"Error generating description from LLM: {e}")
+        return "Failed to generate description."
 
 
 app = typer.Typer(help="Describe the content of a file using the LLM.")

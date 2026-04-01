@@ -1,6 +1,6 @@
 """Fetch HTML from web URLs and convert to markdown."""
 
-from typing import Literal, Optional
+from .imports import Literal, Optional
 
 import httpx
 from html2text import HTML2Text

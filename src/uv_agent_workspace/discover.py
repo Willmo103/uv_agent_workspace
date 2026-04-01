@@ -1,8 +1,7 @@
 import typer
 import json
-from pathlib import Path
-
 from .config import PERCICE_MODEL, CLIENT, FETCHED_PAGES
+from .imports import Path
 
 
 def get_system_prompt(root_path: str, summary: str = "", current_goal: str = "") -> str:
